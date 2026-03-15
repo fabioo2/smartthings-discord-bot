@@ -12,7 +12,7 @@ A Discord bot that monitors your Samsung SmartThings range and sends alerts when
 - Alerts auto-clear when the appliance is turned off
 - Runs as a lightweight Docker container
   
-![Discord alert](https://github.com/user-attachments/assets/82f0506a-b35d-4849-9e3c-3bd1d8b420bb)
+![Discord alert](https://github.com/user-attachments/assets/49104056-2daa-4e2b-ab63-84c47e099de1)
 
 ## Setup
 
