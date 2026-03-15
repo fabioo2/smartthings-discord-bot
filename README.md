@@ -11,6 +11,8 @@ A Discord bot that monitors your Samsung SmartThings range and sends alerts when
 - Oven alerts include mode and temperature
 - Alerts auto-clear when the appliance is turned off
 - Runs as a lightweight Docker container
+  
+![Discord alert](https://github.com/user-attachments/assets/82f0506a-b35d-4849-9e3c-3bd1d8b420bb)
 
 ## Setup
 
