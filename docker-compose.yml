@@ -1,0 +1,6 @@
+services:
+  stove-monitor:
+    build: .
+    container_name: stove-monitor
+    restart: unless-stopped
+    env_file: .env
