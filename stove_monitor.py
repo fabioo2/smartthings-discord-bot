@@ -85,6 +85,7 @@ class StoveMonitor(discord.Client):
         self.oven_alert_msg = None
         self.cooktop_last_alert = None
         self.oven_last_alert = None
+        self._token_alerted = False
 
     async def setup_hook(self):
         self.loop.create_task(self._monitor_loop())
@@ -97,9 +98,9 @@ class StoveMonitor(discord.Client):
         async with aiohttp.ClientSession() as session:
             async with session.get(API_URL, headers=headers) as resp:
                 if resp.status == 200:
-                    return await resp.json()
+                    return resp.status, await resp.json()
                 print(f"SmartThings API error: {resp.status}")
-                return None
+                return resp.status, None
 
     async def _monitor_loop(self):
         await self.wait_until_ready()
@@ -109,9 +110,32 @@ class StoveMonitor(discord.Client):
 
         while not self.is_closed():
             try:
-                data = await self._fetch_status()
+                status, data = await self._fetch_status()
                 if data:
+                    if self._token_alerted:
+                        self._token_alerted = False
+                        embed = discord.Embed(
+                            title="\u2705 SmartThings Reconnected",
+                            description="API token is working again. Monitoring resumed.",
+                            color=discord.Color.green(),
+                        )
+                        await channel.send(embed=embed)
                     await self._check(data, channel)
+                elif status == 401 and not self._token_alerted:
+                    self._token_alerted = True
+                    embed = discord.Embed(
+                        title="\u26a0\ufe0f SmartThings Token Expired",
+                        description=(
+                            "The SmartThings API token is no longer valid. "
+                            "Stove monitoring is **offline** until the token is replaced.\n\n"
+                            "Generate a new token at "
+                            "[account.smartthings.com/tokens]"
+                            "(https://account.smartthings.com/tokens) "
+                            "and update the `.env` file."
+                        ),
+                        color=discord.Color.orange(),
+                    )
+                    await channel.send(embed=embed)
             except Exception as e:
                 print(f"Monitor error: {e}")
             await asyncio.sleep(POLL_INTERVAL_SEC)
