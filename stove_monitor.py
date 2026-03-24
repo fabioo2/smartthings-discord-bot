@@ -6,8 +6,8 @@ import aiohttp
 import discord
 from discord.ui import View, Button
 
-SMARTTHINGS_TOKEN = os.environ["SMARTTHINGS_TOKEN"]
-DEVICE_ID = os.environ["STOVE_DEVICE_ID"]
+HA_URL = os.environ.get("HA_URL", "http://homeassistant:8123")
+HA_TOKEN = os.environ["HA_TOKEN"]
 DISCORD_BOT_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
 DISCORD_CHANNEL_ID = int(os.environ["DISCORD_CHANNEL_ID"])
 COOKTOP_THRESHOLD_MIN = float(os.environ.get("COOKTOP_THRESHOLD_MIN", "30"))
@@ -15,7 +15,12 @@ OVEN_THRESHOLD_MIN = float(os.environ.get("OVEN_THRESHOLD_MIN", "120"))
 POLL_INTERVAL_SEC = int(os.environ.get("POLL_INTERVAL_SEC", "60"))
 REALERT_INTERVAL_MIN = float(os.environ.get("REALERT_INTERVAL_MIN", "15"))
 
-API_URL = f"https://api.smartthings.com/v1/devices/{DEVICE_ID}/status"
+ENTITIES = {
+    "cooktop": "sensor.range_operating_state",
+    "oven_state": "sensor.range_machine_state",
+    "oven_mode": "sensor.range_oven_mode",
+    "oven_temp": "sensor.range_temperature",
+}
 
 
 class SnoozeView(View):
@@ -85,7 +90,7 @@ class StoveMonitor(discord.Client):
         self.oven_alert_msg = None
         self.cooktop_last_alert = None
         self.oven_last_alert = None
-        self._token_alerted = False
+        self._ha_alerted = False
 
     async def setup_hook(self):
         self.loop.create_task(self._monitor_loop())
@@ -93,14 +98,33 @@ class StoveMonitor(discord.Client):
     async def on_ready(self):
         print(f"Stove monitor online as {self.user}")
 
+    async def _fetch_entity(self, session, entity_id):
+        url = f"{HA_URL}/api/states/{entity_id}"
+        headers = {"Authorization": f"Bearer {HA_TOKEN}"}
+        async with session.get(url, headers=headers) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                return data.get("state")
+            return None
+
     async def _fetch_status(self):
-        headers = {"Authorization": f"Bearer {SMARTTHINGS_TOKEN}"}
+        headers = {"Authorization": f"Bearer {HA_TOKEN}"}
         async with aiohttp.ClientSession() as session:
-            async with session.get(API_URL, headers=headers) as resp:
-                if resp.status == 200:
-                    return resp.status, await resp.json()
-                print(f"SmartThings API error: {resp.status}")
-                return resp.status, None
+            async with session.get(f"{HA_URL}/api/", headers=headers) as resp:
+                if resp.status != 200:
+                    return resp.status, None
+
+            cooktop = await self._fetch_entity(session, ENTITIES["cooktop"])
+            oven_state = await self._fetch_entity(session, ENTITIES["oven_state"])
+            oven_mode = await self._fetch_entity(session, ENTITIES["oven_mode"])
+            oven_temp = await self._fetch_entity(session, ENTITIES["oven_temp"])
+
+            return 200, {
+                "cooktop": cooktop,
+                "oven_state": oven_state,
+                "oven_mode": oven_mode,
+                "oven_temp": oven_temp,
+            }
 
     async def _monitor_loop(self):
         await self.wait_until_ready()
@@ -112,26 +136,22 @@ class StoveMonitor(discord.Client):
             try:
                 status, data = await self._fetch_status()
                 if data:
-                    if self._token_alerted:
-                        self._token_alerted = False
+                    if self._ha_alerted:
+                        self._ha_alerted = False
                         embed = discord.Embed(
-                            title="\u2705 SmartThings Reconnected",
-                            description="API token is working again. Monitoring resumed.",
+                            title="\u2705 Home Assistant Reconnected",
+                            description="API connection restored. Monitoring resumed.",
                             color=discord.Color.green(),
                         )
                         await channel.send(embed=embed)
                     await self._check(data, channel)
-                elif status == 401 and not self._token_alerted:
-                    self._token_alerted = True
+                elif status == 401 and not self._ha_alerted:
+                    self._ha_alerted = True
                     embed = discord.Embed(
-                        title="\u26a0\ufe0f SmartThings Token Expired",
+                        title="\u26a0\ufe0f Home Assistant Unreachable",
                         description=(
-                            "The SmartThings API token is no longer valid. "
-                            "Stove monitoring is **offline** until the token is replaced.\n\n"
-                            "Generate a new token at "
-                            "[account.smartthings.com/tokens]"
-                            "(https://account.smartthings.com/tokens) "
-                            "and update the `.env` file."
+                            "Cannot connect to Home Assistant API. "
+                            "Stove monitoring is **offline** until connectivity is restored."
                         ),
                         color=discord.Color.orange(),
                     )
@@ -142,16 +162,9 @@ class StoveMonitor(discord.Client):
 
     async def _check(self, data, channel):
         now = datetime.now()
-        main = data.get("components", {}).get("main", {})
 
         # --- Cooktop (stovetop burners) ---
-        cooktop_val = (
-            main.get("custom.cooktopOperatingState", {})
-            .get("cooktopOperatingState", {})
-            .get("value")
-        )
-
-        if cooktop_val == "run":
+        if data["cooktop"] == "run":
             if self.cooktop_on_since is None:
                 self.cooktop_on_since = now
             elapsed = (now - self.cooktop_on_since).total_seconds() / 60
@@ -171,13 +184,7 @@ class StoveMonitor(discord.Client):
             self.cooktop_last_alert = None
 
         # --- Oven ---
-        oven_val = (
-            main.get("samsungce.ovenOperatingState", {})
-            .get("operatingState", {})
-            .get("value")
-        )
-
-        if oven_val == "running":
+        if data["oven_state"] == "running":
             if self.oven_on_since is None:
                 self.oven_on_since = now
             elapsed = (now - self.oven_on_since).total_seconds() / 60
@@ -189,16 +196,12 @@ class StoveMonitor(discord.Client):
                     if since_last >= REALERT_INTERVAL_MIN:
                         should_alert = True
                 if should_alert:
-                    oven_mode = (
-                        main.get("samsungce.ovenMode", {})
-                        .get("ovenMode", {})
-                        .get("value", "")
-                    )
-                    oven_temp = (
-                        main.get("temperatureMeasurement", {})
-                        .get("temperature", {})
-                        .get("value", "?")
-                    )
+                    oven_mode = data["oven_mode"]
+                    # Convert °C to °F
+                    try:
+                        oven_temp = round(float(data["oven_temp"]) * 9 / 5 + 32)
+                    except (ValueError, TypeError):
+                        oven_temp = "?"
                     await self._alert(channel, "oven", elapsed, oven_mode, oven_temp)
         else:
             self.oven_on_since = None
@@ -210,7 +213,7 @@ class StoveMonitor(discord.Client):
         h, m = int(elapsed_min // 60), int(elapsed_min % 60)
         time_str = f"{h}h {m}m" if h else f"{m}m"
         desc = f"Your **{appliance}** has been on for **{time_str}**!"
-        if appliance == "oven" and mode and mode != "NoOperation":
+        if appliance == "oven" and mode and mode != "others":
             desc += f"\nMode: **{mode}** at **{temp}\u00b0F**"
 
         embed = discord.Embed(
