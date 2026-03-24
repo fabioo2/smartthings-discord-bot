@@ -1,6 +1,6 @@
-# SmartThings Discord Bot
+# Stove Monitor Discord Bot
 
-A Discord bot that monitors your Samsung SmartThings range and sends alerts when the stovetop or oven has been left on too long. Alerts include interactive snooze and dismiss buttons, and will repeat until acknowledged.
+A Discord bot that monitors your Samsung range via Home Assistant and sends alerts when the stovetop or oven has been left on too long. Alerts include interactive snooze and dismiss buttons, and will repeat until acknowledged.
 
 ## Features
 
@@ -11,20 +11,15 @@ A Discord bot that monitors your Samsung SmartThings range and sends alerts when
 - Oven alerts include mode and temperature
 - Alerts auto-clear when the appliance is turned off
 - Runs as a lightweight Docker container
-  
+
 ![Discord alert](https://github.com/user-attachments/assets/49104056-2daa-4e2b-ab63-84c47e099de1)
 
 ## Setup
 
-### 1. SmartThings API Token
+### 1. Home Assistant
 
-- Go to https://account.smartthings.com/tokens
-- Generate a token with **Devices (read)** permission
-- Find your range's device ID:
-  ```bash
-  curl -H "Authorization: Bearer YOUR_TOKEN" \
-    https://api.smartthings.com/v1/devices
-  ```
+- Run Home Assistant with the SmartThings integration configured
+- Go to your HA profile page (`/profile`) and create a **Long-Lived Access Token**
 
 ### 2. Discord Bot
 
@@ -39,8 +34,8 @@ A Discord bot that monitors your Samsung SmartThings range and sends alerts when
 Copy `.env.example` to `.env` and fill in your values:
 
 ```
-SMARTTHINGS_TOKEN=your_smartthings_token
-STOVE_DEVICE_ID=your_device_id
+HA_URL=http://homeassistant.home
+HA_TOKEN=your_home_assistant_long_lived_token
 DISCORD_BOT_TOKEN=your_discord_bot_token
 DISCORD_CHANNEL_ID=your_channel_id
 
