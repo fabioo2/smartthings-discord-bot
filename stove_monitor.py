@@ -91,6 +91,8 @@ class StoveMonitor(discord.Client):
         self.cooktop_last_alert = None
         self.oven_last_alert = None
         self._ha_alerted = False
+        self._sensors_unavailable_since = None
+        self._sensors_unavailable_alerted = False
 
     async def setup_hook(self):
         self.loop.create_task(self._monitor_loop())
@@ -144,6 +146,41 @@ class StoveMonitor(discord.Client):
                             color=discord.Color.green(),
                         )
                         await channel.send(embed=embed)
+
+                    # Check if sensors are unavailable (HA is up but SmartThings is not)
+                    sensors_bad = all(
+                        v in ("unavailable", "unknown", None)
+                        for v in (data["cooktop"], data["oven_state"])
+                    )
+                    if sensors_bad:
+                        now = datetime.now()
+                        if self._sensors_unavailable_since is None:
+                            self._sensors_unavailable_since = now
+                        elapsed = (now - self._sensors_unavailable_since).total_seconds() / 60
+                        if elapsed >= 5 and not self._sensors_unavailable_alerted:
+                            self._sensors_unavailable_alerted = True
+                            embed = discord.Embed(
+                                title="\u26a0\ufe0f Stove Sensors Unavailable",
+                                description=(
+                                    "Range sensors have been **unavailable** for "
+                                    f"**{int(elapsed)}m**. SmartThings integration "
+                                    "may be down.\n\n"
+                                    "Stove monitoring is **blind** until sensors recover."
+                                ),
+                                color=discord.Color.orange(),
+                            )
+                            await channel.send(embed=embed)
+                    else:
+                        if self._sensors_unavailable_alerted:
+                            embed = discord.Embed(
+                                title="\u2705 Stove Sensors Recovered",
+                                description="Range sensors are back online. Monitoring resumed.",
+                                color=discord.Color.green(),
+                            )
+                            await channel.send(embed=embed)
+                        self._sensors_unavailable_since = None
+                        self._sensors_unavailable_alerted = False
+
                     await self._check(data, channel)
                 elif status == 401 and not self._ha_alerted:
                     self._ha_alerted = True
@@ -158,13 +195,26 @@ class StoveMonitor(discord.Client):
                     await channel.send(embed=embed)
             except Exception as e:
                 print(f"Monitor error: {e}")
+                if not self._ha_alerted:
+                    self._ha_alerted = True
+                    embed = discord.Embed(
+                        title="\u26a0\ufe0f Home Assistant Unreachable",
+                        description=(
+                            "Cannot connect to Home Assistant API. "
+                            "Stove monitoring is **offline** until connectivity is restored."
+                        ),
+                        color=discord.Color.orange(),
+                    )
+                    await channel.send(embed=embed)
             await asyncio.sleep(POLL_INTERVAL_SEC)
 
     async def _check(self, data, channel):
         now = datetime.now()
 
         # --- Cooktop (stovetop burners) ---
-        if data["cooktop"] == "run":
+        if data["cooktop"] in ("unavailable", "unknown", None):
+            pass  # Don't reset state — sensors are down
+        elif data["cooktop"] == "run":
             if self.cooktop_on_since is None:
                 self.cooktop_on_since = now
             elapsed = (now - self.cooktop_on_since).total_seconds() / 60
@@ -184,7 +234,9 @@ class StoveMonitor(discord.Client):
             self.cooktop_last_alert = None
 
         # --- Oven ---
-        if data["oven_state"] == "running":
+        if data["oven_state"] in ("unavailable", "unknown", None):
+            pass  # Don't reset state — sensors are down
+        elif data["oven_state"] == "running":
             if self.oven_on_since is None:
                 self.oven_on_since = now
             elapsed = (now - self.oven_on_since).total_seconds() / 60
