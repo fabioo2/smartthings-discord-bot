@@ -228,6 +228,15 @@ class StoveMonitor(discord.Client):
                 if should_alert:
                     await self._alert(channel, "cooktop", elapsed)
         else:
+            if self.cooktop_alert_msg:
+                try:
+                    embed = discord.Embed(
+                        description="**Cooktop** was turned off. Alert resolved.",
+                        color=discord.Color.green(),
+                    )
+                    await self.cooktop_alert_msg.edit(embed=embed, view=None)
+                except discord.NotFound:
+                    pass
             self.cooktop_on_since = None
             self.cooktop_snoozed_until = None
             self.cooktop_alert_msg = None
@@ -256,6 +265,15 @@ class StoveMonitor(discord.Client):
                         oven_temp = "?"
                     await self._alert(channel, "oven", elapsed, oven_mode, oven_temp)
         else:
+            if self.oven_alert_msg:
+                try:
+                    embed = discord.Embed(
+                        description="**Oven** was turned off. Alert resolved.",
+                        color=discord.Color.green(),
+                    )
+                    await self.oven_alert_msg.edit(embed=embed, view=None)
+                except discord.NotFound:
+                    pass
             self.oven_on_since = None
             self.oven_snoozed_until = None
             self.oven_alert_msg = None
