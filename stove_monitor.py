@@ -294,6 +294,17 @@ class StoveMonitor(discord.Client):
         embed.set_footer(text="Is this intentional?")
 
         view = SnoozeView(self, appliance)
+
+        # Keep only one active alert per appliance: delete the prior one
+        # (if any) before posting the new one so the channel stays clean but
+        # the user still gets re-pinged.
+        prev_msg = getattr(self, f"{appliance}_alert_msg", None)
+        if prev_msg:
+            try:
+                await prev_msg.delete()
+            except (discord.NotFound, discord.Forbidden):
+                pass
+
         msg = await channel.send(embed=embed, view=view)
         setattr(self, f"{appliance}_alert_msg", msg)
         setattr(self, f"{appliance}_last_alert", datetime.now())
